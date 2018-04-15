@@ -1,0 +1,229 @@
+---
+title: "DATA 607 - Project 4 [Document Classification]"
+author: "Simon U."
+date: "April 15, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+####Libraries
+```{r lib, warning=FALSE, message=FALSE}
+library(RTextTools)
+library(tm)
+library(tidyverse)
+```
+***
+
+####Preparation
+To replicate the process, first pull the project files from GitHub  
+and set the **base.dir** accordingly (in my case base.dir="~/GitHub/Project4")
+```{r prep}
+base.dir <- "~/GitHub/Project4"
+```
+***
+
+####Define MAX number of files for the training and testing of the model and then load the file names
+```{r file_names}
+ham.test.max <- 25
+spam.test.max <- 14
+ham.train.max <- 500-ham.test.max
+spam.train.max <- 500-spam.test.max
+
+ham.train.dir <- file.path(base.dir, "ham_training")
+spam.train.dir <- file.path(base.dir, "spam_training")
+ham.train.files <- dir(ham.train.dir)[1:ham.train.max]
+spam.train.files <- dir(spam.train.dir)[1:spam.train.max]
+
+ham.test.dir <- file.path(base.dir, "ham_testing")
+spam.test.dir <- file.path(base.dir, "spam_testing")
+ham.test.files <- dir(ham.test.dir)[1:ham.test.max]
+spam.test.files <- dir(spam.test.dir)[1:spam.test.max]
+```
+***
+
+####Process the first HAM (non-spam) *training* email text file
+When processing the text files, use ***regex*** expressions to remove Date and Time entries  
+
+1.  `((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\W+(\d){1,2}\W+\d{1,2}:\d{1,2}:\d{1,2}\W+\d{4}`  
+**Mon Oct  7 12:07:10 2002**  
+**Tue Nov  12 12:07:10 2002**  
+
+2.  `((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\W+\d{1,2}\W+\d{4}`  
+**Mon, Oct 07, 2002**  
+
+3.  `((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\W+\d{1,2}\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\W+\d{4}`  
+**Tue, 1 Oct 2002**  
+
+4.  `\d{1,2}:\d{1,2}:\d{1,2}(\W?(AM|PM)?\W+(\+|\-)\d{4})?`  
+**09:43:11AM +0100**  
+**10:34:39 -0100**  
+**12:07:10**  
+
+5.  `\d{4}(-|/)\d{1,2}(-|/)\d{1,2}`  
+**2002-10-03**  
+**2002/10/03**  
+
+6.  `\d{1,2}(-|/)\d{1,2}(-|/)\d{4}`  
+**10-03-2002**  
+**10/03/2002**  
+
+7.  `(\+|\-)\d{4}`  
+**+0100**  
+**-0100**  
+
+8.  `((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\W+(\d){1,2}`  
+**Sun Mar 17**  
+
+9.  `((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\W+\d{1,2}\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))`  
+**Tue, 1 Oct**  
+```{r first_ham_train_file}
+txt.entry <- read_lines(file.path(ham.train.dir, ham.train.files[1])) %>% 
+  str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}\\W+\\d{1,2}:\\d{1,2}:\\d{1,2}\\W+\\d{4}") %>% 
+  str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{1,2}\\W+\\d{4}") %>% 
+  str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{4}") %>% 
+  str_remove_all("\\d{1,2}:\\d{1,2}:\\d{1,2}(\\W?(AM|PM)?\\W+(\\+|\\-)\\d{4})?") %>% 
+  str_remove_all("\\d{4}(-|/)\\d{1,2}(-|/)\\d{1,2}") %>% 
+  str_remove_all("\\d{1,2}(-|/)\\d{1,2}(-|/)\\d{4}") %>% 
+  str_remove_all("(\\+|\\-)\\d{4}") %>% 
+  str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}") %>% 
+  str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))")
+
+txt.entry <- str_c(txt.entry, collapse = "")
+txt.labels <- "ham"
+```
+***
+
+####Process the rest of the HAM *training* email text files
+Build up the vectors of text entries and classification labels for the model.  
+NOTE:  each file is being reduced to a single text line and added to the vector.
+```{r rest_ham_train_files}
+for(i in 2:length(ham.train.files)) {
+  tmp.entry <- read_lines(file.path(ham.train.dir, ham.train.files[i])) %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}\\W+\\d{1,2}:\\d{1,2}:\\d{1,2}\\W+\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{1,2}\\W+\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{4}") %>% 
+    str_remove_all("\\d{1,2}:\\d{1,2}:\\d{1,2}(\\W?(AM|PM)?\\W+(\\+|\\-)\\d{4})?") %>% 
+    str_remove_all("\\d{1,2}(-|/)\\d{1,2}(-|/)\\d{4}") %>% 
+    str_remove_all("(\\+|\\-)\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))") %>% 
+    str_remove_all("^[[:blank:]]{0,}$[\\r\\n]")
+  
+  tmp.entry <- str_c(tmp.entry, collapse = "")
+  
+  txt.entry <- c(txt.entry, tmp.entry)
+  txt.labels <- c(txt.labels, "ham")
+}
+```
+***
+
+####Process SPAM *training* email text files
+```{r spam_train_files}
+for(i in 1:length(spam.train.files)) {
+  tmp.entry <- read_lines(file.path(spam.train.dir, spam.train.files[i])) %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}\\W+\\d{1,2}:\\d{1,2}:\\d{1,2}\\W+\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{1,2}\\W+\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{4}") %>% 
+    str_remove_all("\\d{1,2}:\\d{1,2}:\\d{1,2}(\\W?(AM|PM)?\\W+(\\+|\\-)\\d{4})?") %>% 
+    str_remove_all("\\d{1,2}(-|/)\\d{1,2}(-|/)\\d{4}") %>% 
+    str_remove_all("(\\+|\\-)\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))") %>% 
+    str_remove_all("^[[:blank:]]{0,}$[\\r\\n]")
+  
+  tmp.entry <- str_c(tmp.entry, collapse = "")
+  
+  txt.entry <- c(txt.entry, tmp.entry)
+  txt.labels <- c(txt.labels, "spam")
+}
+```
+***
+
+####Process HAM *testing* email text files
+NOTE: Test entries can have a blank label
+```{r ham_test_files}
+for(i in 1:length(ham.test.files)) {
+  tmp.entry <- read_lines(file.path(ham.test.dir, ham.test.files[i])) %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}\\W+\\d{1,2}:\\d{1,2}:\\d{1,2}\\W+\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{1,2}\\W+\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{4}") %>% 
+    str_remove_all("\\d{1,2}:\\d{1,2}:\\d{1,2}(\\W?(AM|PM)?\\W+(\\+|\\-)\\d{4})?") %>% 
+    str_remove_all("\\d{1,2}(-|/)\\d{1,2}(-|/)\\d{4}") %>% 
+    str_remove_all("(\\+|\\-)\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))") %>% 
+    str_remove_all("^[[:blank:]]{0,}$[\\r\\n]")
+  
+  tmp.entry <- str_c(tmp.entry, collapse = "")
+  
+  txt.entry <- c(txt.entry, tmp.entry)
+  txt.labels <- c(txt.labels, "") #test entires don't require a label
+}
+```
+***
+
+####Process SPAM *testing* email text files
+```{r spam_test_files}
+for(i in 1:length(spam.test.files)) {
+  tmp.entry <- read_lines(file.path(spam.test.dir, spam.test.files[i])) %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}\\W+\\d{1,2}:\\d{1,2}:\\d{1,2}\\W+\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{1,2}\\W+\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+\\d{4}") %>% 
+    str_remove_all("\\d{1,2}:\\d{1,2}:\\d{1,2}(\\W?(AM|PM)?\\W+(\\+|\\-)\\d{4})?") %>% 
+    str_remove_all("\\d{1,2}(-|/)\\d{1,2}(-|/)\\d{4}") %>% 
+    str_remove_all("(\\+|\\-)\\d{4}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))\\W+(\\d){1,2}") %>% 
+    str_remove_all("((Mon)|(Tue)|(Wed)|(Thu)|(Fri)|(Sat)|(Sun))\\W+\\d{1,2}\\W+((Jan)|(Feb)|(Mar)|(Apr)|(May)|(Jun)|(Jul)|(Aug)|(Sep)|(Oct)|(Nov)|(Dec))") %>% 
+    str_remove_all("^[[:blank:]]{0,}$[\\r\\n]")
+  
+  tmp.entry <- str_c(tmp.entry, collapse = "")
+  
+  txt.entry <- c(txt.entry, tmp.entry)
+  txt.labels <- c(txt.labels, "")
+}
+```
+***
+
+####Build a Corpus of the text entries
+```{r create_corpus}
+the.corpus <- Corpus(VectorSource(txt.entry))
+the.corpus
+meta(the.corpus, tag = "polarity", type = "indexed") <- txt.labels
+head(meta(the.corpus))
+```
+***
+
+####Build a "Document Term Matrix"" from the corpus
+```{r create_dtm}
+dtm <- DocumentTermMatrix(the.corpus)
+dtm <- removeSparseTerms(dtm, 1-(10/length(the.corpus)))
+dtm
+```
+***
+
+####Create a Container object for the model
+```{r create_container}
+N <- length(txt.labels)
+container <- create_container(
+  dtm,
+  labels = txt.labels,
+  trainSize = 1:(ham.train.max+spam.train.max),
+  testSize = (1+ham.train.max+spam.train.max):N,
+  virgin = FALSE
+)
+```
+***
+
+####Create the model (in this case SVM - Support Vector Machines model) and observe the results
+```{r create_model}
+svm_model <- train_model(container, "SVM")
+svm_out <- classify_model(container, svm_model)
+svm_out
+```
+***
+
+####Conclusion
+The results are nearly perfect.  The only outlier is on line #18 which reported spam, where as the first 25 items in the test set are suppose to be HAM.  For the SPAM test set, lines 26-39, the first 8 were spam entries from my personal emails and they were classified correctly.  I then used 3 spam emails [lines 34-36] and 3 ham emails [lines 37-39] from the *"downloaded"* set and they all were also classified correctly.
